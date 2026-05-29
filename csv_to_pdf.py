@@ -1,5 +1,7 @@
 import os
 import pandas as pd
+
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import (
     SimpleDocTemplate,
@@ -8,143 +10,282 @@ from reportlab.platypus import (
     Table,
     TableStyle
 )
-from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
-# -----------------------------
-# CONFIG
-# -----------------------------
-PATIENTS_CSV = "patients.csv"
-OBSERVATIONS_CSV = "observations.csv"
-OUTPUT_DIR = "reports"
+# ==================================================
+# PATHS
+# ==================================================
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
 
-# -----------------------------
+PATIENTS_CSV = os.path.join(
+    PROJECT_ROOT,
+    "synthea",
+    "output",
+    "csv",
+    "patients.csv"
+)
+
+OBSERVATIONS_CSV = os.path.join(
+    PROJECT_ROOT,
+    "synthea",
+    "output",
+    "csv",
+    "observations.csv"
+)
+
+REPORTS_DIR = os.path.join(
+    BASE_DIR,
+    "reports"
+)
+
+os.makedirs(REPORTS_DIR, exist_ok=True)
+
+# ==================================================
 # LOAD DATA
-# -----------------------------
+# ==================================================
+
+print("Loading patients...")
 patients = pd.read_csv(PATIENTS_CSV)
-observations = pd.read_csv(OBSERVATIONS_CSV)
 
-# -----------------------------
-# FILTER LAB OBSERVATIONS
-# -----------------------------
-# Keep only rows that have numeric values
-observations = observations[observations["VALUE"].notna()]
+print("Loading observations...")
+observations = pd.read_csv(
+    OBSERVATIONS_CSV,
+    low_memory=False
+)
 
-# -----------------------------
-# STYLES
-# -----------------------------
+print(f"Patients loaded: {len(patients)}")
+print(f"Observations loaded: {len(observations)}")
+
 styles = getSampleStyleSheet()
 
-# -----------------------------
-# GENERATE REPORTS
-# -----------------------------
-for _, patient in patients.iterrows():
+# ==================================================
+# GENERATE ONE PDF PER PATIENT
+# ==================================================
+
+for index, patient in patients.iterrows():
 
     patient_id = patient["Id"]
 
-    patient_obs = observations[observations["PATIENT"] == patient_id]
-
-    # Skip patients with no observations
-    if patient_obs.empty:
-        continue
-
-    # Patient Info
     first_name = str(patient.get("FIRST", ""))
     last_name = str(patient.get("LAST", ""))
-    gender = str(patient.get("GENDER", ""))
-    birthdate = str(patient.get("BIRTHDATE", ""))
 
-    filename = os.path.join(
-        OUTPUT_DIR,
+    patient_name = f"{first_name} {last_name}".strip()
+
+    print(
+        f"Generating {index+1}/{len(patients)} : {patient_name}"
+    )
+
+    # ------------------------------------------
+    # Create PDF file
+    # ------------------------------------------
+
+    pdf_path = os.path.join(
+        REPORTS_DIR,
         f"{patient_id}.pdf"
     )
 
     doc = SimpleDocTemplate(
-        filename,
+        pdf_path,
         pagesize=letter
     )
 
     elements = []
 
-    # -----------------------------
-    # HEADER
-    # -----------------------------
-    title = Paragraph(
-        "<b>SYNTHETIC LAB REPORT</b>",
-        styles["Title"]
+    # ------------------------------------------
+    # Hospital Header
+    # ------------------------------------------
+
+    elements.append(
+        Paragraph(
+            "MediCore Diagnostic Laboratory",
+            styles["Title"]
+        )
     )
 
-    elements.append(title)
+    elements.append(
+        Paragraph(
+            "Comprehensive Patient Laboratory Report",
+            styles["Heading2"]
+        )
+    )
+
     elements.append(Spacer(1, 20))
 
-    # -----------------------------
-    # PATIENT DETAILS
-    # -----------------------------
-    patient_details = f"""
-    <b>Patient ID:</b> {patient_id}<br/>
-    <b>Name:</b> {first_name} {last_name}<br/>
-    <b>Gender:</b> {gender}<br/>
-    <b>Date of Birth:</b> {birthdate}<br/>
+    # ------------------------------------------
+    # Patient Information
+    # ------------------------------------------
+
+    elements.append(
+        Paragraph(
+            "<b>PATIENT INFORMATION</b>",
+            styles["Heading2"]
+        )
+    )
+
+    elements.append(
+        Paragraph(
+            f"<b>Name:</b> {patient_name}",
+            styles["Normal"]
+        )
+    )
+
+    elements.append(
+        Paragraph(
+            f"<b>Patient ID:</b> {patient_id}",
+            styles["Normal"]
+        )
+    )
+
+    elements.append(
+        Paragraph(
+            f"<b>Gender:</b> {patient.get('GENDER','')}",
+            styles["Normal"]
+        )
+    )
+
+    elements.append(
+        Paragraph(
+            f"<b>Date of Birth:</b> {patient.get('BIRTHDATE','')}",
+            styles["Normal"]
+        )
+    )
+
+    elements.append(Spacer(1, 20))
+
+    # ------------------------------------------
+    # Clinical Summary
+    # ------------------------------------------
+
+    elements.append(
+        Paragraph(
+            "<b>CLINICAL SUMMARY</b>",
+            styles["Heading2"]
+        )
+    )
+
+    summary = f"""
+    This laboratory report contains all recorded observations
+    and measurements available for patient {patient_name}.
+    Results should be interpreted in conjunction with clinical
+    history, physician evaluation, and other diagnostic findings.
     """
 
     elements.append(
-        Paragraph(patient_details, styles["BodyText"])
+        Paragraph(summary, styles["Normal"])
     )
 
     elements.append(Spacer(1, 20))
 
-    # -----------------------------
-    # LAB TABLE
-    # -----------------------------
-    table_data = [
-        ["Test", "Value", "Units", "Date"]
+    # ------------------------------------------
+    # Lab Results
+    # ------------------------------------------
+
+    patient_obs = observations[
+        observations["PATIENT"] == patient_id
     ]
 
-    for _, obs in patient_obs.iterrows():
+    if len(patient_obs) > 0:
 
-        test_name = str(obs.get("DESCRIPTION", "Unknown"))
-        value = str(obs.get("VALUE", ""))
-        units = str(obs.get("UNITS", ""))
-        date = str(obs.get("DATE", ""))
+        elements.append(
+            Paragraph(
+                "<b>LABORATORY RESULTS</b>",
+                styles["Heading2"]
+            )
+        )
 
-        table_data.append([
-            test_name,
-            value,
-            units,
-            date
-        ])
+        elements.append(Spacer(1, 10))
 
-    table = Table(table_data, repeatRows=1)
+        table_data = [
+            [
+                "Date",
+                "Test Name",
+                "Result",
+                "Units"
+            ]
+        ]
 
-    table.setStyle(
-        TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.lightblue),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-            ("GRID", (0, 0), (-1, -1), 1, colors.black),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
-        ])
-    )
+        for _, row in patient_obs.iterrows():
 
-    elements.append(table)
+            table_data.append([
+                str(row.get("DATE", ""))[:10],
+                str(row.get("DESCRIPTION", "")),
+                str(row.get("VALUE", "")),
+                str(row.get("UNITS", ""))
+            ])
+
+        table = Table(
+            table_data,
+            colWidths=[70, 280, 80, 80]
+        )
+
+        table.setStyle(
+            TableStyle([
+                (
+                    "BACKGROUND",
+                    (0,0),
+                    (-1,0),
+                    colors.lightgrey
+                ),
+                (
+                    "GRID",
+                    (0,0),
+                    (-1,-1),
+                    1,
+                    colors.black
+                ),
+                (
+                    "FONTNAME",
+                    (0,0),
+                    (-1,0),
+                    "Helvetica-Bold"
+                ),
+                (
+                    "VALIGN",
+                    (0,0),
+                    (-1,-1),
+                    "TOP"
+                ),
+            ])
+        )
+
+        elements.append(table)
+
+    else:
+
+        elements.append(
+            Paragraph(
+                "No observations found.",
+                styles["Normal"]
+            )
+        )
+
+    # ------------------------------------------
+    # Footer
+    # ------------------------------------------
 
     elements.append(Spacer(1, 20))
 
-    # -----------------------------
-    # FOOTER
-    # -----------------------------
-    footer = Paragraph(
-        "This is a synthetic lab report generated using Synthea data.",
-        styles["Italic"]
+    elements.append(
+        Paragraph(
+            "Electronically Generated Report - MediCore",
+            styles["Italic"]
+        )
     )
 
-    elements.append(footer)
+    # ------------------------------------------
+    # Save PDF
+    # ------------------------------------------
 
-    # -----------------------------
-    # BUILD PDF
-    # -----------------------------
     doc.build(elements)
 
-print(f"Lab reports generated in: {OUTPUT_DIR}")
+print()
+print("DONE")
+print(f"Reports saved to: {REPORTS_DIR}")
+
+# pip3 install pandas reportlab
+# pip3 show reportlab
+# pip3 show pandas
+
+# python3 csv_to_pdf.py
